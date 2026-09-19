@@ -1,0 +1,880 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Visor AR</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0b0d0e;
+    --panel: rgba(16,18,19,0.74);
+    --panel-strong: rgba(16,18,19,0.92);
+    --hairline: rgba(237,239,236,0.16);
+    --ink: #edefec;
+    --ink-dim: #97a19c;
+    --accent: #c6ff3d;
+    --accent-ink: #12170a;
+    --rec: #ff4545;
+    --radius: 10px;
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0b0d0e; --panel: rgba(16,18,19,0.74); --ink: #edefec; --accent: #c6ff3d;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0b0d0e; --panel: rgba(16,18,19,0.74); --ink: #edefec; --accent: #c6ff3d;
+  }
+  html, body { height: 100%; }
+  html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    overflow: hidden;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  #app { position: fixed; inset: 0; overflow: hidden; background: #000; }
+
+  #camera {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    background: #000;
+    transform: scaleX(var(--mirror, 1));
+  }
+  #three {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    touch-action: none;
+    display: block;
+  }
+
+  /* viewfinder corner brackets — mark the active framing area */
+  .bracket {
+    position: absolute;
+    width: 22px; height: 22px;
+    border: 2px solid rgba(237,239,236,0.55);
+    pointer-events: none;
+    opacity: 0.9;
+  }
+  .bracket.tl { top: calc(64px + env(safe-area-inset-top,0px)); left: 14px; border-right: none; border-bottom: none; }
+  .bracket.tr { top: calc(64px + env(safe-area-inset-top,0px)); right: 14px; border-left: none; border-bottom: none; }
+  .bracket.bl { bottom: calc(150px + env(safe-area-inset-bottom,0px)); left: 14px; border-right: none; border-top: none; }
+  .bracket.br { bottom: calc(150px + env(safe-area-inset-bottom,0px)); right: 14px; border-left: none; border-top: none; }
+
+  header.topbar {
+    position: fixed; top: 0; left: 0; right: 0;
+    padding: calc(12px + env(safe-area-inset-top,0px)) 14px 12px;
+    display: flex; align-items: center; justify-content: space-between;
+    background: linear-gradient(to bottom, rgba(0,0,0,0.55), rgba(0,0,0,0));
+    z-index: 5;
+  }
+  .brand { font-size: 15px; font-weight: 600; letter-spacing: 0.2px; }
+  .brand small { display: block; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: var(--ink-dim); font-weight: 400; margin-top: 1px; }
+
+  .iconbtn {
+    width: 38px; height: 38px;
+    border-radius: 50%;
+    border: 1px solid var(--hairline);
+    background: var(--panel);
+    color: var(--ink);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 17px;
+    cursor: pointer;
+  }
+  .iconbtn:active { transform: scale(0.94); }
+  .iconbtn:disabled { opacity: 0.35; }
+  .iconbtn.locked { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+
+  .status-pill {
+    position: fixed; top: calc(56px + env(safe-area-inset-top,0px)); left: 50%; transform: translateX(-50%);
+    background: var(--panel); border: 1px solid var(--hairline); border-radius: 999px;
+    padding: 6px 14px; font-size: 12.5px; color: var(--ink-dim); z-index: 5;
+    white-space: nowrap;
+  }
+
+  #permission-screen {
+    position: fixed; inset: 0; z-index: 20;
+    background: var(--bg);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 32px; text-align: center; gap: 18px;
+  }
+  #permission-screen .mark { font-size: 40px; }
+  #permission-screen h1 { font-size: 19px; margin: 0; font-weight: 600; max-width: 280px; }
+  #permission-screen p { font-size: 13.5px; color: var(--ink-dim); margin: 0; max-width: 280px; line-height: 1.5; }
+  .btn-primary {
+    background: var(--accent); color: var(--accent-ink);
+    border: none; border-radius: var(--radius);
+    padding: 13px 26px; font-size: 14.5px; font-weight: 600;
+    font-family: inherit; cursor: pointer;
+  }
+  .btn-primary:active { transform: scale(0.97); }
+  .btn-ghost {
+    background: transparent; color: var(--ink-dim);
+    border: 1px solid var(--hairline); border-radius: var(--radius);
+    padding: 10px 18px; font-size: 13px; font-family: inherit; cursor: pointer;
+  }
+
+  footer.panel-bottom {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
+    padding: 10px 14px calc(14px + env(safe-area-inset-bottom,0px));
+    background: linear-gradient(to top, rgba(0,0,0,0.6), rgba(0,0,0,0));
+  }
+
+  .readout {
+    display: flex; gap: 8px; margin-bottom: 10px;
+  }
+  .readout .cell {
+    flex: 1;
+    background: var(--panel); border: 1px solid var(--hairline); border-radius: 8px;
+    padding: 6px 10px;
+  }
+  .readout .cell .label { font-size: 10.5px; color: var(--ink-dim); }
+  .readout .cell .value { font-family: 'IBM Plex Mono', monospace; font-size: 13px; margin-top: 1px; }
+
+  .controls-row {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .controls-row .spacer { flex: 1; }
+
+  .ctrlbtn {
+    background: var(--panel); border: 1px solid var(--hairline); color: var(--ink);
+    width: 44px; height: 44px; border-radius: var(--radius);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; cursor: pointer;
+  }
+  .ctrlbtn:active { transform: scale(0.94); }
+  .ctrlbtn:disabled { opacity: 0.35; }
+
+  .record-btn {
+    width: 62px; height: 62px; border-radius: 50%;
+    border: 3px solid var(--ink);
+    background: transparent;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+  }
+  .record-btn .dot {
+    width: 44px; height: 44px; border-radius: 50%;
+    background: var(--rec);
+    transition: border-radius 0.15s, width 0.15s, height 0.15s;
+  }
+  .record-btn.recording .dot { border-radius: 6px; width: 26px; height: 26px; }
+  .record-btn:disabled { opacity: 0.35; }
+
+  .import-btn {
+    background: var(--panel); border: 1px solid var(--hairline); color: var(--ink);
+    border-radius: var(--radius); padding: 0 14px; height: 44px;
+    font-family: inherit; font-size: 12.5px; font-weight: 500; cursor: pointer;
+    display: flex; align-items: center; gap: 6px;
+  }
+
+  .scale-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+  .scale-row label { font-size: 11px; color: var(--ink-dim); font-family: 'IBM Plex Mono', monospace; width: 52px; }
+  input[type="range"] {
+    -webkit-appearance: none; appearance: none;
+    flex: 1; height: 3px; background: var(--hairline); border-radius: 2px; outline: none;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%;
+    background: var(--accent); cursor: pointer; border: none;
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 18px; height: 18px; border-radius: 50%; background: var(--accent); border: none; cursor: pointer;
+  }
+
+  #toast {
+    position: fixed; left: 50%; bottom: calc(200px + env(safe-area-inset-bottom,0px));
+    transform: translateX(-50%) translateY(8px);
+    background: var(--panel-strong); border: 1px solid var(--hairline);
+    padding: 9px 16px; border-radius: 999px; font-size: 12.5px;
+    opacity: 0; pointer-events: none; transition: opacity 0.2s, transform 0.2s;
+    z-index: 30; white-space: nowrap;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  #rec-timer {
+    position: fixed; top: calc(56px + env(safe-area-inset-top,0px)); left: 50%; transform: translateX(-50%);
+    background: var(--rec); color: #1a0505; border-radius: 999px; padding: 6px 14px;
+    font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; font-weight: 500;
+    z-index: 6; display: none; align-items: center; gap: 6px;
+  }
+  #rec-timer.show { display: flex; }
+  #rec-timer .blip { width: 7px; height: 7px; border-radius: 50%; background: #1a0505; animation: blink 1s infinite; }
+  @keyframes blink { 50% { opacity: 0.2; } }
+
+  #empty-hint {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    background: var(--panel); border: 1px solid var(--hairline); border-radius: 999px;
+    padding: 9px 16px; font-size: 12.5px; color: var(--ink-dim); z-index: 4;
+    pointer-events: none; text-align: center; max-width: 240px;
+  }
+
+  #preview-sheet {
+    position: fixed; inset: 0; z-index: 25; background: rgba(0,0,0,0.86);
+    display: none; align-items: center; justify-content: center; flex-direction: column; gap: 16px;
+    padding: 24px;
+  }
+  #preview-sheet.show { display: flex; }
+  #preview-sheet video { max-width: 100%; max-height: 60vh; border-radius: var(--radius); background: #000; }
+  #preview-sheet .row { display: flex; gap: 10px; }
+
+  input[type="file"] { display: none; }
+</style>
+</head>
+<body>
+<div id="app">
+  <video id="camera" autoplay playsinline muted></video>
+  <canvas id="three"></canvas>
+
+  <div class="bracket tl"></div>
+  <div class="bracket tr"></div>
+  <div class="bracket bl"></div>
+  <div class="bracket br"></div>
+
+  <div id="empty-hint">Importe um objeto .obj ou .glb para começar</div>
+
+  <header class="topbar">
+    <div class="brand">Visor AR<small>objeto virtual sobre a câmera</small></div>
+    <div style="display:flex; gap:8px;">
+      <button class="iconbtn" id="lock-btn" title="Travar objeto no lugar" aria-label="Travar objeto no lugar" disabled>🔓</button>
+      <button class="iconbtn" id="flip-btn" title="Trocar câmera" aria-label="Trocar câmera">⟳</button>
+    </div>
+  </header>
+
+  <div id="rec-timer"><span class="blip"></span><span id="rec-timer-text">0:00</span></div>
+
+  <footer class="panel-bottom">
+    <div class="readout">
+      <div class="cell"><div class="label">Posição X</div><div class="value" id="ro-x">0.00</div></div>
+      <div class="cell"><div class="label">Posição Y</div><div class="value" id="ro-y">0.00</div></div>
+      <div class="cell"><div class="label">Rotação</div><div class="value" id="ro-r">0°</div></div>
+    </div>
+
+    <div class="controls-row">
+      <button class="import-btn" id="import-btn">Importar objeto</button>
+      <div class="spacer"></div>
+      <button class="ctrlbtn" id="rotate-l-btn" title="Girar para a esquerda" disabled>↺</button>
+      <button class="record-btn" id="record-btn" title="Gravar" disabled><div class="dot"></div></button>
+      <button class="ctrlbtn" id="rotate-r-btn" title="Girar para a direita" disabled>↻</button>
+      <div class="spacer"></div>
+      <button class="ctrlbtn" id="reset-btn" title="Repor posição" disabled>⟲</button>
+    </div>
+
+    <div class="scale-row">
+      <label>Escala</label>
+      <input type="range" id="scale-slider" min="0.3" max="4" step="0.01" value="1" disabled>
+    </div>
+  </footer>
+
+  <div id="permission-screen">
+    <div class="mark">🎥</div>
+    <h1>Este site precisa da sua câmera</h1>
+    <p>A imagem da câmera fica só no seu aparelho. Ela é usada para posicionar o objeto virtual por cima da cena em tempo real.</p>
+    <button class="btn-primary" id="grant-btn">Ativar câmera</button>
+  </div>
+
+  <div id="preview-sheet">
+    <video id="preview-video" controls playsinline></video>
+    <div class="row">
+      <button class="btn-ghost" id="discard-btn">Descartar</button>
+      <button class="btn-primary" id="save-btn">Salvar vídeo</button>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+  <input type="file" id="file-input" accept=".obj,.glb,.gltf">
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  var video = document.getElementById('camera');
+  var canvas = document.getElementById('three');
+  var permissionScreen = document.getElementById('permission-screen');
+  var grantBtn = document.getElementById('grant-btn');
+  var flipBtn = document.getElementById('flip-btn');
+  var lockBtn = document.getElementById('lock-btn');
+  var importBtn = document.getElementById('import-btn');
+  var fileInput = document.getElementById('file-input');
+  var recordBtn = document.getElementById('record-btn');
+  var resetBtn = document.getElementById('reset-btn');
+  var rotateLBtn = document.getElementById('rotate-l-btn');
+  var rotateRBtn = document.getElementById('rotate-r-btn');
+  var scaleSlider = document.getElementById('scale-slider');
+  var emptyHint = document.getElementById('empty-hint');
+  var toastEl = document.getElementById('toast');
+  var recTimerEl = document.getElementById('rec-timer');
+  var recTimerText = document.getElementById('rec-timer-text');
+  var previewSheet = document.getElementById('preview-sheet');
+  var previewVideo = document.getElementById('preview-video');
+  var saveBtn = document.getElementById('save-btn');
+  var discardBtn = document.getElementById('discard-btn');
+  var roX = document.getElementById('ro-x');
+  var roY = document.getElementById('ro-y');
+  var roR = document.getElementById('ro-r');
+
+  var currentFacing = 'environment';
+  var currentStream = null;
+
+  var scene, camera3d, renderer, clock;
+  var currentObject = null;
+  var mixer = null;
+  var baseScale = 1;
+  var initialPose = null;
+
+  var pointers = new Map();
+  var gesture = null;
+  var isLocked = false;
+  var worldLockActive = false;
+  var refDeviceQuaternion = null;
+  var haveOrientation = false;
+  var orientationListenerAdded = false;
+  var lastAlpha = 0, lastBeta = 0, lastGamma = 0;
+  var DEVQ_ZEE = new THREE.Vector3(0, 0, 1);
+  var DEVQ_Q1 = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
+
+  var compositeCanvas, compositeCtx;
+  var isRecording = false;
+  var mediaRecorder = null;
+  var recordedChunks = [];
+  var recordStart = 0;
+  var lastVideoBlobUrl = null;
+  var recordingMimeType = '';
+
+  function showToast(msg){
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(function(){ toastEl.classList.remove('show'); }, 2600);
+  }
+
+  function dist(a,b){ return Math.hypot(a.x-b.x, a.y-b.y); }
+  function angleBetween(a,b){ return Math.atan2(b.y-a.y, b.x-a.x); }
+  function clamp(v,min,max){ return Math.min(Math.max(v,min),max); }
+
+  // ---------- three.js setup ----------
+  function initThree(){
+    scene = new THREE.Scene();
+    camera3d = new THREE.PerspectiveCamera(60, canvas.clientWidth/canvas.clientHeight, 0.05, 100);
+    camera3d.position.set(0,0,0);
+
+    renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true, preserveDrawingBuffer: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setClearColor(0x000000, 0);
+    resizeThree();
+
+    var hemi = new THREE.HemisphereLight(0xffffff, 0x404040, 1.0);
+    scene.add(hemi);
+    var dir = new THREE.DirectionalLight(0xffffff, 0.9);
+    dir.position.set(2, 3, 2);
+    scene.add(dir);
+
+    clock = new THREE.Clock();
+    requestAnimationFrame(animate);
+    window.addEventListener('resize', resizeThree);
+  }
+
+  function resizeThree(){
+    var w = canvas.clientWidth, h = canvas.clientHeight;
+    if(!w || !h) return;
+    camera3d.aspect = w/h;
+    camera3d.updateProjectionMatrix();
+    renderer.setSize(w, h, false);
+  }
+
+  function getScreenOrientationAngle(){
+    if(screen.orientation && typeof screen.orientation.angle === 'number') return screen.orientation.angle * Math.PI / 180;
+    if(typeof window.orientation === 'number') return window.orientation * Math.PI / 180;
+    return 0;
+  }
+
+  function deviceQuaternionFromReading(alphaDeg, betaDeg, gammaDeg, orientAngleRad){
+    var alpha = (alphaDeg || 0) * Math.PI / 180;
+    var beta = (betaDeg || 0) * Math.PI / 180;
+    var gamma = (gammaDeg || 0) * Math.PI / 180;
+    var euler = new THREE.Euler(beta, alpha, -gamma, 'YXZ');
+    var q = new THREE.Quaternion().setFromEuler(euler);
+    q.multiply(DEVQ_Q1);
+    q.multiply(new THREE.Quaternion().setFromAxisAngle(DEVQ_ZEE, -orientAngleRad));
+    return q;
+  }
+
+  function onDeviceOrientation(e){
+    if(e.alpha === null && e.beta === null && e.gamma === null) return;
+    lastAlpha = e.alpha; lastBeta = e.beta; lastGamma = e.gamma;
+    haveOrientation = true;
+  }
+
+  function animate(){
+    requestAnimationFrame(animate);
+    var dt = clock.getDelta();
+    if(mixer) mixer.update(dt);
+    if(worldLockActive && refDeviceQuaternion && haveOrientation){
+      var qNow = deviceQuaternionFromReading(lastAlpha, lastBeta, lastGamma, getScreenOrientationAngle());
+      camera3d.quaternion.copy(qNow.multiply(refDeviceQuaternion.clone().invert()));
+    }
+    renderer.render(scene, camera3d);
+    if(isRecording) compositeFrame();
+  }
+
+  // ---------- camera (real world) ----------
+  function stopStream(){
+    if(currentStream){
+      currentStream.getTracks().forEach(function(t){ t.stop(); });
+      currentStream = null;
+    }
+  }
+
+  function initCamera(){
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+      showPermissionScreen('Este navegador não permite acesso à câmera aqui.');
+      return;
+    }
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: currentFacing }, audio: false })
+      .then(function(stream){
+        stopStream();
+        currentStream = stream;
+        video.srcObject = stream;
+        document.documentElement.style.setProperty('--mirror', currentFacing === 'user' ? '-1' : '1');
+        return video.play();
+      })
+      .then(function(){
+        permissionScreen.style.display = 'none';
+        if(!scene) initThree();
+      })
+      .catch(function(err){
+        var msg = 'Não foi possível acessar a câmera.';
+        if(err && err.name === 'NotAllowedError') msg = 'A permissão da câmera foi negada.';
+        else if(err && err.name === 'NotFoundError') msg = 'Nenhuma câmera foi encontrada neste aparelho.';
+        showPermissionScreen(msg);
+      });
+  }
+
+  function showPermissionScreen(msg){
+    permissionScreen.style.display = 'flex';
+    permissionScreen.querySelector('p').textContent = msg + ' Toque abaixo para tentar de novo.';
+  }
+
+  grantBtn.addEventListener('click', initCamera);
+
+  flipBtn.addEventListener('click', function(){
+    currentFacing = currentFacing === 'environment' ? 'user' : 'environment';
+    initCamera();
+  });
+
+  // ---------- model import ----------
+  importBtn.addEventListener('click', function(){ fileInput.click(); });
+
+  fileInput.addEventListener('change', function(){
+    var file = fileInput.files && fileInput.files[0];
+    if(!file) return;
+    handleFile(file);
+    fileInput.value = '';
+  });
+
+  function handleFile(file){
+    var ext = file.name.split('.').pop().toLowerCase();
+    var reader = new FileReader();
+
+    if(ext === 'glb' || ext === 'gltf'){
+      reader.onload = function(e){
+        try{
+          var loader = new THREE.GLTFLoader();
+          loader.parse(e.target.result, '', function(gltf){
+            setModel(gltf.scene, gltf.animations || []);
+          }, function(){ showToast('Não consegui abrir este arquivo .' + ext); });
+        }catch(err){ showToast('Não consegui abrir este arquivo .' + ext); }
+      };
+      reader.readAsArrayBuffer(file);
+    } else if(ext === 'obj'){
+      reader.onload = function(e){
+        try{
+          var loader = new THREE.OBJLoader();
+          var obj = loader.parse(e.target.result);
+          setModel(obj, []);
+        }catch(err){ showToast('Não consegui abrir este arquivo .obj'); }
+      };
+      reader.readAsText(file);
+    } else {
+      showToast('Formato não suportado. Use .obj ou .glb');
+    }
+  }
+
+  function setModel(obj, animations){
+    if(currentObject){
+      scene.remove(currentObject);
+      currentObject.traverse(function(node){
+        if(node.geometry) node.geometry.dispose();
+        if(node.material){
+          if(Array.isArray(node.material)) node.material.forEach(function(m){ m.dispose(); });
+          else node.material.dispose();
+        }
+      });
+    }
+
+    var box = new THREE.Box3().setFromObject(obj);
+    var size = new THREE.Vector3();
+    box.getSize(size);
+    var maxDim = Math.max(size.x, size.y, size.z) || 1;
+    var scale = 1.4 / maxDim;
+    obj.scale.setScalar(scale);
+
+    var box2 = new THREE.Box3().setFromObject(obj);
+    var center = new THREE.Vector3();
+    box2.getCenter(center);
+    obj.position.sub(center);
+    obj.position.z -= 3;
+
+    scene.add(obj);
+    currentObject = obj;
+    baseScale = scale;
+
+    if(animations && animations.length){
+      mixer = new THREE.AnimationMixer(obj);
+      mixer.clipAction(animations[0]).play();
+    } else {
+      mixer = null;
+    }
+
+    initialPose = {
+      position: obj.position.clone(),
+      rotation: obj.rotation.clone(),
+      scale: obj.scale.x
+    };
+
+    emptyHint.style.display = 'none';
+    setControlsEnabled(true);
+    scaleSlider.value = '1';
+    updateReadout();
+  }
+
+  function setControlsEnabled(on){
+    recordBtn.disabled = !on;
+    resetBtn.disabled = !on;
+    rotateLBtn.disabled = !on;
+    rotateRBtn.disabled = !on;
+    scaleSlider.disabled = !on;
+    lockBtn.disabled = !on;
+  }
+
+  function finalizeLock(withWorldTracking){
+    isLocked = true;
+    gesture = null;
+    pointers.clear();
+    lockBtn.textContent = '🔒';
+    lockBtn.classList.add('locked');
+    lockBtn.title = 'Destravar objeto';
+    showToast(withWorldTracking
+      ? 'Travado no espaço — vire a câmera livremente'
+      : 'Travado na tela (sem sensor de movimento neste aparelho)');
+  }
+
+  function disableWorldLock(){
+    worldLockActive = false;
+    refDeviceQuaternion = null;
+    if(camera3d) camera3d.quaternion.identity();
+    isLocked = false;
+    lockBtn.textContent = '🔓';
+    lockBtn.classList.remove('locked');
+    lockBtn.title = 'Travar objeto no lugar';
+    showToast('Objeto destravado');
+  }
+
+  function armWorldLockAfterPermission(granted){
+    if(!granted){
+      finalizeLock(false);
+      return;
+    }
+    if(!orientationListenerAdded){
+      window.addEventListener('deviceorientation', onDeviceOrientation, true);
+      orientationListenerAdded = true;
+    }
+    var tries = 0;
+    (function waitReading(){
+      if(haveOrientation){
+        refDeviceQuaternion = deviceQuaternionFromReading(lastAlpha, lastBeta, lastGamma, getScreenOrientationAngle());
+        worldLockActive = true;
+        finalizeLock(true);
+      } else if(tries < 20){
+        tries++;
+        setTimeout(waitReading, 50);
+      } else {
+        finalizeLock(false);
+      }
+    })();
+  }
+
+  function enableWorldLock(){
+    if(typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function'){
+      DeviceOrientationEvent.requestPermission()
+        .then(function(state){ armWorldLockAfterPermission(state === 'granted'); })
+        .catch(function(){ armWorldLockAfterPermission(false); });
+    } else if('DeviceOrientationEvent' in window){
+      armWorldLockAfterPermission(true);
+    } else {
+      armWorldLockAfterPermission(false);
+    }
+  }
+
+  lockBtn.addEventListener('click', function(){
+    if(isLocked) disableWorldLock();
+    else enableWorldLock();
+  });
+
+  function updateReadout(){
+    if(!currentObject) return;
+    roX.textContent = currentObject.position.x.toFixed(2);
+    roY.textContent = currentObject.position.y.toFixed(2);
+    var deg = Math.round((currentObject.rotation.y * 180 / Math.PI) % 360);
+    roR.textContent = deg + '°';
+  }
+
+  // ---------- gesture controls ----------
+  canvas.addEventListener('pointerdown', function(e){
+    if(!currentObject || isLocked) return;
+    canvas.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    beginGesture();
+  });
+
+  canvas.addEventListener('pointermove', function(e){
+    if(!pointers.has(e.pointerId)) return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if(!currentObject || !gesture) return;
+
+    if(gesture.type === 'pan' && pointers.size === 1){
+      var p = pointers.values().next().value;
+      var dx = p.x - gesture.startX;
+      var dy = p.y - gesture.startY;
+      var d = Math.abs(gesture.startPos.z);
+      var fovRad = camera3d.fov * Math.PI / 180;
+      var h = 2 * Math.tan(fovRad/2) * d;
+      var w = h * (canvas.clientWidth / canvas.clientHeight);
+      currentObject.position.x = gesture.startPos.x + (dx / canvas.clientWidth) * w;
+      currentObject.position.y = gesture.startPos.y - (dy / canvas.clientHeight) * h;
+    } else if(gesture.type === 'pinchRotate' && pointers.size === 2){
+      var vals = Array.from(pointers.values());
+      var d2 = dist(vals[0], vals[1]);
+      var ang = angleBetween(vals[0], vals[1]);
+      var newScale = clamp(gesture.startScale * (d2 / gesture.startDist), baseScale*0.3, baseScale*4);
+      currentObject.scale.setScalar(newScale);
+      currentObject.rotation.y = gesture.startRotY + (ang - gesture.startAngle);
+      scaleSlider.value = (newScale / baseScale).toFixed(2);
+    }
+    updateReadout();
+  });
+
+  function endPointer(e){
+    pointers.delete(e.pointerId);
+    beginGesture();
+  }
+  canvas.addEventListener('pointerup', endPointer);
+  canvas.addEventListener('pointercancel', endPointer);
+
+  function beginGesture(){
+    if(!currentObject){ gesture = null; return; }
+    if(pointers.size === 1){
+      var p = pointers.values().next().value;
+      gesture = { type: 'pan', startX: p.x, startY: p.y, startPos: currentObject.position.clone() };
+    } else if(pointers.size === 2){
+      var vals = Array.from(pointers.values());
+      gesture = {
+        type: 'pinchRotate',
+        startDist: dist(vals[0], vals[1]),
+        startAngle: angleBetween(vals[0], vals[1]),
+        startScale: currentObject.scale.x,
+        startRotY: currentObject.rotation.y
+      };
+    } else {
+      gesture = null;
+    }
+  }
+
+  canvas.addEventListener('wheel', function(e){
+    if(!currentObject || isLocked) return;
+    e.preventDefault();
+    var s = clamp(currentObject.scale.x * (1 - e.deltaY * 0.001), baseScale*0.3, baseScale*4);
+    currentObject.scale.setScalar(s);
+    scaleSlider.value = (s / baseScale).toFixed(2);
+    updateReadout();
+  }, { passive: false });
+
+  rotateLBtn.addEventListener('click', function(){
+    if(!currentObject) return;
+    currentObject.rotation.y -= Math.PI/12;
+    updateReadout();
+  });
+  rotateRBtn.addEventListener('click', function(){
+    if(!currentObject) return;
+    currentObject.rotation.y += Math.PI/12;
+    updateReadout();
+  });
+
+  scaleSlider.addEventListener('input', function(){
+    if(!currentObject) return;
+    var s = baseScale * parseFloat(scaleSlider.value);
+    currentObject.scale.setScalar(s);
+    updateReadout();
+  });
+
+  resetBtn.addEventListener('click', function(){
+    if(!currentObject || !initialPose) return;
+    currentObject.position.copy(initialPose.position);
+    currentObject.rotation.copy(initialPose.rotation);
+    currentObject.scale.setScalar(initialPose.scale);
+    scaleSlider.value = '1';
+    updateReadout();
+  });
+
+  // ---------- recording ----------
+  function setupComposite(){
+    compositeCanvas = document.createElement('canvas');
+    compositeCtx = compositeCanvas.getContext('2d');
+  }
+
+  function compositeFrame(){
+    if(!compositeCtx) return;
+    var mirror = currentFacing === 'user';
+    compositeCtx.save();
+    if(mirror){
+      compositeCtx.translate(compositeCanvas.width, 0);
+      compositeCtx.scale(-1, 1);
+    }
+    compositeCtx.drawImage(video, 0, 0, compositeCanvas.width, compositeCanvas.height);
+    compositeCtx.restore();
+    compositeCtx.drawImage(renderer.domElement, 0, 0, compositeCanvas.width, compositeCanvas.height);
+  }
+
+  function pickMimeType(){
+    var options = [
+      'video/mp4;codecs=avc1.42E01E',
+      'video/mp4',
+      'video/webm;codecs=vp9',
+      'video/webm;codecs=vp8',
+      'video/webm'
+    ];
+    for(var i=0;i<options.length;i++){
+      if(window.MediaRecorder && MediaRecorder.isTypeSupported(options[i])) return options[i];
+    }
+    return '';
+  }
+
+  function startRecording(){
+    if(!video.videoWidth || !currentObject) return;
+    if(!compositeCanvas) setupComposite();
+    compositeCanvas.width = video.videoWidth;
+    compositeCanvas.height = video.videoHeight;
+
+    var stream = compositeCanvas.captureStream(30);
+    var mimeType = pickMimeType();
+    if(!mimeType){ showToast('Gravação não é suportada neste navegador.'); return; }
+    recordingMimeType = mimeType;
+
+    recordedChunks = [];
+    try{
+      mediaRecorder = new MediaRecorder(stream, { mimeType: mimeType });
+    }catch(err){
+      showToast('Não foi possível iniciar a gravação.');
+      return;
+    }
+    mediaRecorder.ondataavailable = function(e){ if(e.data && e.data.size > 0) recordedChunks.push(e.data); };
+    mediaRecorder.onstop = onRecordingStop;
+    mediaRecorder.start();
+
+    isRecording = true;
+    recordStart = performance.now();
+    recordBtn.classList.add('recording');
+    recTimerEl.classList.add('show');
+    tickTimer();
+  }
+
+  function stopRecording(){
+    if(mediaRecorder && isRecording){
+      mediaRecorder.stop();
+    }
+    isRecording = false;
+    recordBtn.classList.remove('recording');
+    recTimerEl.classList.remove('show');
+  }
+
+  function tickTimer(){
+    if(!isRecording) return;
+    var secs = Math.floor((performance.now() - recordStart) / 1000);
+    var m = Math.floor(secs / 60);
+    var s = secs % 60;
+    recTimerText.textContent = m + ':' + (s < 10 ? '0' : '') + s;
+    requestAnimationFrame(tickTimer);
+  }
+
+  recordBtn.addEventListener('click', function(){
+    if(isRecording) stopRecording();
+    else startRecording();
+  });
+
+  function onRecordingStop(){
+    var blob = new Blob(recordedChunks, { type: recordingMimeType || 'video/webm' });
+    recordedChunks = [];
+    if(blob.size === 0){
+      showToast('A gravação ficou vazia.');
+      return;
+    }
+    if(lastVideoBlobUrl) URL.revokeObjectURL(lastVideoBlobUrl);
+    lastVideoBlobUrl = URL.createObjectURL(blob);
+    previewVideo.src = lastVideoBlobUrl;
+    previewSheet.classList.add('show');
+    saveBtn.dataset.pending = '1';
+    saveBtn.__blob = blob;
+    saveBtn.__ext = recordingMimeType.indexOf('mp4') !== -1 ? 'mp4' : 'webm';
+  }
+
+  discardBtn.addEventListener('click', function(){
+    previewSheet.classList.remove('show');
+    previewVideo.pause();
+    previewVideo.removeAttribute('src');
+    previewVideo.load();
+  });
+
+  saveBtn.addEventListener('click', function(){
+    var blob = saveBtn.__blob;
+    if(!blob) return;
+    if(!window.claude || typeof window.claude.use !== 'function'){
+      showToast('Salvar não está disponível aqui.');
+      return;
+    }
+    window.claude.use('downloads').then(function(downloads){
+      if(!downloads){ showToast('Salvar não está disponível aqui.'); return; }
+      return downloads.save({ filename: 'visor-ar-' + Date.now() + '.' + (saveBtn.__ext || 'webm'), data: blob })
+        .then(function(){
+          showToast('Vídeo salvo.');
+          previewSheet.classList.remove('show');
+        })
+        .catch(function(err){
+          if(err && err.code === 'declined') return;
+          showToast('Não foi possível salvar o vídeo.');
+        });
+    });
+  });
+
+  // ---------- boot ----------
+  document.documentElement.style.setProperty('--mirror', '1');
+  video.addEventListener('loadedmetadata', function(){
+    resizeThree();
+  });
+})();
+</script>
+</body>
+</html>
