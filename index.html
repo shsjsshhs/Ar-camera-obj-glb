@@ -1,0 +1,862 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Visor AR</title>
+<style>
+  :root{
+    --mirror: 1;
+    --accent: #ff2d55;
+    --panel: rgba(20,20,22,0.55);
+    --panel-strong: rgba(20,20,22,0.78);
+    color-scheme: dark;
+  }
+  *{ box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body{
+    margin:0; padding:0; width:100%; height:100%;
+    background:#000; overflow:hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    touch-action: none;
+  }
+  #app{
+    position:fixed; inset:0;
+    width:100vw; height:100dvh;
+    overflow:hidden;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  #camera{
+    position:absolute; inset:0;
+    width:100%; height:100%;
+    object-fit: cover;
+    transform: scaleX(var(--mirror));
+    background:#000;
+  }
+  #three{
+    position:absolute; inset:0;
+    width:100%; height:100%;
+    display:block;
+    pointer-events:none;
+  }
+  /* ---------- topo ---------- */
+  #topbar{
+    position:absolute; top:0; left:0; right:0;
+    padding: max(12px, env(safe-area-inset-top)) 14px 40px;
+    display:flex; align-items:flex-start; justify-content:space-between;
+    background: linear-gradient(to bottom, rgba(0,0,0,0.55), rgba(0,0,0,0));
+    pointer-events:none;
+  }
+  #topbar .title{ color:#fff; font-size:19px; font-weight:700; }
+  #topbar .subtitle{ color:rgba(255,255,255,0.65); font-size:12px; margin-top:2px; }
+  #topbar .right-icons{ display:flex; gap:10px; pointer-events:auto; }
+  .icon-btn{
+    width:44px; height:44px; border-radius:50%;
+    background: var(--panel); border:none; color:#fff;
+    font-size:19px; display:flex; align-items:center; justify-content:center;
+    backdrop-filter: blur(6px);
+  }
+  .icon-btn.active{ background:#2ecc71; color:#08331b; }
+  .icon-btn:disabled{ opacity:0.35; }
+
+  /* ---------- sessão AR real (WebXR) ---------- */
+  /* o navegador compõe a câmera real por trás da página nesse modo;
+     o fundo precisa ficar transparente para ela aparecer */
+  html.xr-active, html.xr-active body, body.xr-active, body.xr-active #app{
+    background: transparent !important;
+  }
+  body.xr-active #camera{ display:none; }
+
+  /* ---------- dica vazia ---------- */
+  #empty-hint{
+    position:absolute; left:0; right:0; top:44%;
+    text-align:center; color:rgba(255,255,255,0.75);
+    font-size:14px; padding:0 30px; pointer-events:none;
+  }
+
+  /* ---------- leitura de posição ---------- */
+  #readout{
+    position:absolute; left:14px; right:14px; bottom:346px;
+    display:flex; gap:8px; pointer-events:none;
+  }
+  #readout .chip{
+    flex:1; background:var(--panel); border-radius:12px; padding:8px 10px;
+    color:#fff; backdrop-filter: blur(6px);
+  }
+  #readout .chip .lbl{ font-size:10px; color:rgba(255,255,255,0.6); text-transform:uppercase; letter-spacing:0.04em; }
+  #readout .chip .val{ font-size:15px; font-weight:700; margin-top:1px; }
+
+  /* ---------- zoom vertical ---------- */
+  #zoom-control{
+    position:absolute; left:16px; bottom:150px;
+    display:flex; flex-direction:column; align-items:center; gap:8px;
+    pointer-events:auto;
+  }
+  #zoom-control button{
+    width:38px; height:38px; border-radius:50%; border:none;
+    background:var(--panel); color:#fff; font-size:17px;
+  }
+  #scale-slider{
+    -webkit-appearance:none; appearance:none;
+    width: 150px; height: 4px; margin:0;
+    background: rgba(255,255,255,0.35); border-radius:4px;
+    transform: rotate(-90deg);
+    transform-origin: center;
+  }
+  #scale-slider::-webkit-slider-thumb{
+    -webkit-appearance:none; width:20px; height:20px; border-radius:50%;
+    background:#ffcc33; border:2px solid #fff;
+  }
+  #scale-slider::-moz-range-thumb{
+    width:20px; height:20px; border-radius:50%;
+    background:#ffcc33; border:2px solid #fff;
+  }
+  #zoom-wrap{ width:38px; height:160px; display:flex; align-items:center; justify-content:center; overflow:visible; }
+
+  /* ---------- joystick ---------- */
+  #joystick-base{
+    position:absolute; right:26px; bottom:130px;
+    width:116px; height:116px; border-radius:50%;
+    background: radial-gradient(circle, rgba(255,255,255,0.10), rgba(255,255,255,0.03));
+    border:1px solid rgba(255,255,255,0.25);
+    pointer-events:auto;
+    touch-action:none;
+  }
+  #joystick-base .arrow{
+    position:absolute; color:rgba(255,255,255,0.55); font-size:14px;
+    pointer-events:none;
+  }
+  #joystick-base .arrow.up{ top:6px; left:50%; transform:translateX(-50%); }
+  #joystick-base .arrow.down{ bottom:6px; left:50%; transform:translateX(-50%); }
+  #joystick-base .arrow.left{ left:6px; top:50%; transform:translateY(-50%); }
+  #joystick-base .arrow.right{ right:6px; top:50%; transform:translateY(-50%); }
+  #joystick-knob{
+    position:absolute; left:50%; top:50%; width:46px; height:46px;
+    margin-left:-23px; margin-top:-23px; border-radius:50%;
+    background:#fff; box-shadow:0 2px 8px rgba(0,0,0,0.4);
+    transition: transform 0.05s linear;
+  }
+
+  /* ---------- controles inferiores ---------- */
+  #bottom-controls{
+    position:absolute; left:0; right:0; bottom:0;
+    padding: 14px 16px max(16px, env(safe-area-inset-bottom));
+    display:flex; align-items:center; justify-content:space-between;
+    background: linear-gradient(to top, rgba(0,0,0,0.6), rgba(0,0,0,0));
+    pointer-events:auto;
+  }
+  .ctl-btn{
+    width:52px; height:52px; border-radius:50%; border:none;
+    background:var(--panel-strong); color:#fff; font-size:20px;
+    display:flex; align-items:center; justify-content:center;
+    backdrop-filter: blur(6px);
+  }
+  .ctl-btn:disabled{ opacity:0.3; }
+  #import-btn{
+    width:auto; border-radius:26px; padding:0 16px; font-size:13px; font-weight:600; gap:6px;
+  }
+  #record-btn{
+    width:70px; height:70px; border-radius:50%;
+    background:var(--accent); border:4px solid rgba(255,255,255,0.85);
+  }
+  #record-btn.recording{ border-radius:20px; width:34px; height:34px; }
+  #record-wrap{ width:78px; height:78px; border-radius:50%; border:2px solid rgba(255,255,255,0.5); display:flex; align-items:center; justify-content:center; }
+
+  /* ---------- timer de gravação ---------- */
+  #rec-timer{
+    position:absolute; top:max(12px, env(safe-area-inset-top)); left:50%; transform:translateX(-50%);
+    background:var(--accent); color:#fff; font-weight:700; font-size:13px;
+    padding:6px 12px; border-radius:14px; display:none; align-items:center; gap:6px;
+  }
+  #rec-timer.show{ display:flex; }
+  #rec-timer .dot{ width:8px; height:8px; border-radius:50%; background:#fff; }
+
+  /* ---------- toast ---------- */
+  #toast{
+    position:absolute; left:50%; bottom:200px; transform:translate(-50%,10px);
+    background:rgba(20,20,22,0.9); color:#fff; padding:10px 16px; border-radius:12px;
+    font-size:13px; opacity:0; transition: opacity .25s, transform .25s; pointer-events:none;
+    max-width:80%; text-align:center;
+  }
+  #toast.show{ opacity:1; transform:translate(-50%,0); }
+
+  /* ---------- tela de permissão ---------- */
+  #permission-screen{
+    position:fixed; inset:0; z-index:50;
+    background:#0c0c0e; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; text-align:center;
+    padding:30px; color:#fff;
+  }
+  #permission-screen h2{ margin:0 0 8px; font-size:20px; }
+  #permission-screen p{ margin:0 0 22px; color:rgba(255,255,255,0.65); font-size:14px; max-width:300px; }
+  #grant-btn{
+    background:var(--accent); color:#fff; border:none; padding:14px 28px;
+    border-radius:26px; font-size:15px; font-weight:700;
+  }
+
+  /* ---------- folha de pré-visualização ---------- */
+  #preview-sheet{
+    position:fixed; inset:0; z-index:60; background:#000;
+    display:none; flex-direction:column;
+  }
+  #preview-sheet.show{ display:flex; }
+  #preview-video{ flex:1; width:100%; object-fit:contain; background:#000; }
+  #preview-actions{
+    display:flex; gap:12px; padding: 16px 16px max(16px, env(safe-area-inset-bottom));
+    background:#111;
+  }
+  #preview-actions button{
+    flex:1; padding:14px; border-radius:14px; border:none; font-size:15px; font-weight:700;
+  }
+  #discard-btn{ background:#2a2a2e; color:#fff; }
+  #save-btn{ background:var(--accent); color:#fff; }
+
+  input[type=file]{ display:none; }
+</style>
+</head>
+<body>
+<div id="app">
+  <video id="camera" autoplay muted playsinline></video>
+  <canvas id="three"></canvas>
+
+  <div id="topbar">
+    <div>
+      <div class="title">Visor AR</div>
+      <div class="subtitle">objeto virtual sobre a câmera</div>
+    </div>
+    <div class="right-icons">
+      <button id="mic-btn" class="icon-btn" title="Ativar microfone">🔇</button>
+      <button id="ar-btn" class="icon-btn" title="Ativar AR real (WebXR)" disabled>🌐</button>
+      <button id="flip-btn" class="icon-btn" title="Trocar câmera">🔄</button>
+    </div>
+  </div>
+
+  <div id="rec-timer"><span class="dot"></span><span id="rec-timer-text">0:00</span></div>
+
+  <div id="empty-hint">Toque em "Importar objeto" para carregar um modelo .obj ou .glb</div>
+
+  <div id="readout">
+    <div class="chip"><div class="lbl">Posição X</div><div class="val" id="ro-x">0.00</div></div>
+    <div class="chip"><div class="lbl">Posição Y</div><div class="val" id="ro-y">0.00</div></div>
+    <div class="chip"><div class="lbl">Rotação</div><div class="val" id="ro-r">0°</div></div>
+  </div>
+
+  <div id="zoom-control">
+    <button id="zoom-in-btn">＋</button>
+    <div id="zoom-wrap"><input type="range" id="scale-slider" min="0.3" max="4" step="0.05" value="1" disabled></div>
+    <button id="zoom-out-btn">－</button>
+  </div>
+
+  <div id="joystick-base">
+    <span class="arrow up">▲</span>
+    <span class="arrow down">▼</span>
+    <span class="arrow left">◀</span>
+    <span class="arrow right">▶</span>
+    <div id="joystick-knob"></div>
+  </div>
+
+  <div id="bottom-controls">
+    <button id="import-btn" class="ctl-btn">📦 Importar</button>
+    <button id="rotate-l-btn" class="ctl-btn" disabled>↺</button>
+    <div id="record-wrap"><button id="record-btn" disabled></button></div>
+    <button id="rotate-r-btn" class="ctl-btn" disabled>↻</button>
+    <button id="reset-btn" class="ctl-btn" disabled>⟲</button>
+  </div>
+
+  <input type="file" id="file-input" accept=".obj,.glb,.gltf">
+  <div id="toast"></div>
+
+  <div id="permission-screen">
+    <h2>Permitir câmera</h2>
+    <p>Precisamos acessar sua câmera para mostrar o objeto virtual sobre o mundo real.</p>
+    <button id="grant-btn">Ativar câmera</button>
+  </div>
+
+  <div id="preview-sheet">
+    <video id="preview-video" controls playsinline></video>
+    <div id="preview-actions">
+      <button id="discard-btn">Descartar</button>
+      <button id="save-btn">Salvar vídeo</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // polyfill p/ navegadores antigos sem navigator.mediaDevices.getUserMedia
+  if(!navigator.mediaDevices){ navigator.mediaDevices = {}; }
+  if(!navigator.mediaDevices.getUserMedia){
+    navigator.mediaDevices.getUserMedia = function(constraints){
+      var legacy = navigator.webkitGetUserMedia || navigator.mozGetUserMedia || navigator.msGetUserMedia;
+      if(!legacy) return Promise.reject(new Error('getUserMedia not supported'));
+      return new Promise(function(resolve, reject){ legacy.call(navigator, constraints, resolve, reject); });
+    };
+  }
+
+  var TARGET_W = 720, TARGET_H = 1280; // vídeo gravado sempre 9:16
+
+  var video = document.getElementById('camera');
+  var canvas = document.getElementById('three');
+  var permissionScreen = document.getElementById('permission-screen');
+  var grantBtn = document.getElementById('grant-btn');
+  var flipBtn = document.getElementById('flip-btn');
+  var arBtn = document.getElementById('ar-btn');
+  var micBtn = document.getElementById('mic-btn');
+  var importBtn = document.getElementById('import-btn');
+  var fileInput = document.getElementById('file-input');
+  var recordBtn = document.getElementById('record-btn');
+  var resetBtn = document.getElementById('reset-btn');
+  var rotateLBtn = document.getElementById('rotate-l-btn');
+  var rotateRBtn = document.getElementById('rotate-r-btn');
+  var scaleSlider = document.getElementById('scale-slider');
+  var zoomInBtn = document.getElementById('zoom-in-btn');
+  var zoomOutBtn = document.getElementById('zoom-out-btn');
+  var joystickBase = document.getElementById('joystick-base');
+  var joystickKnob = document.getElementById('joystick-knob');
+  var emptyHint = document.getElementById('empty-hint');
+  var toastEl = document.getElementById('toast');
+  var recTimerEl = document.getElementById('rec-timer');
+  var recTimerText = document.getElementById('rec-timer-text');
+  var previewSheet = document.getElementById('preview-sheet');
+  var previewVideo = document.getElementById('preview-video');
+  var saveBtn = document.getElementById('save-btn');
+  var discardBtn = document.getElementById('discard-btn');
+  var roX = document.getElementById('ro-x');
+  var roY = document.getElementById('ro-y');
+  var roR = document.getElementById('ro-r');
+
+  var currentFacing = 'environment';
+  var currentStream = null;
+  var micStream = null;
+  var micEnabled = false;
+
+  var scene, camera3d, renderer, clock;
+  var currentObject = null;
+  var mixer = null;
+  var baseScale = 1;
+  var initialPose = null;
+
+  var xrSession = null;
+  var xrSupported = false;
+
+  var joystickActive = false;
+  var joystickVec = { x: 0, y: 0 };
+  var JOY_MAX = 42;
+  var MOVE_SPEED = 1.1; // unidades de mundo por segundo, na deflexão máxima
+
+  var compositeCanvas, compositeCtx;
+  var isRecording = false;
+  var mediaRecorder = null;
+  var recordedChunks = [];
+  var recordStart = 0;
+  var lastVideoBlobUrl = null;
+  var recordingMimeType = '';
+  var recTimerInterval = null;
+
+  function showToast(msg){
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(function(){ toastEl.classList.remove('show'); }, 2400);
+  }
+  function clamp(v, min, max){ return Math.min(Math.max(v, min), max); }
+
+  // ---------- three.js ----------
+  function initThree(){
+    scene = new THREE.Scene();
+    camera3d = new THREE.PerspectiveCamera(60, canvas.clientWidth / canvas.clientHeight, 0.05, 100);
+    camera3d.position.set(0, 0, 0);
+
+    renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true, preserveDrawingBuffer: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setClearColor(0x000000, 0);
+    renderer.xr.enabled = true;
+    resizeThree();
+
+    var hemi = new THREE.HemisphereLight(0xffffff, 0x404040, 1.0);
+    scene.add(hemi);
+    var dir = new THREE.DirectionalLight(0xffffff, 0.9);
+    dir.position.set(2, 3, 2);
+    scene.add(dir);
+
+    clock = new THREE.Clock();
+    requestAnimationFrame(rafLoop);
+    window.addEventListener('resize', resizeThree);
+  }
+
+  function rafLoop(){
+    if(xrSession) return; // o WebXR passa a chamar animate() sozinho durante a sessão
+    animate();
+    requestAnimationFrame(rafLoop);
+  }
+
+  function resizeThree(){
+    var w = canvas.clientWidth, h = canvas.clientHeight;
+    if(!w || !h || !renderer) return;
+    camera3d.aspect = w / h;
+    camera3d.updateProjectionMatrix();
+    renderer.setSize(w, h, false);
+  }
+
+  function animate(){
+    var dt = clock.getDelta();
+    if(mixer) mixer.update(dt);
+
+    if(currentObject && (joystickVec.x !== 0 || joystickVec.y !== 0)){
+      currentObject.position.x += joystickVec.x * MOVE_SPEED * dt;
+      currentObject.position.y -= joystickVec.y * MOVE_SPEED * dt;
+      updateReadout();
+    }
+
+    renderer.render(scene, camera3d);
+    if(isRecording) compositeFrame();
+  }
+
+  // ---------- câmera ----------
+  function stopStream(){
+    if(currentStream){
+      currentStream.getTracks().forEach(function(t){ t.stop(); });
+      currentStream = null;
+    }
+  }
+
+  function initCamera(){
+    if(!window.isSecureContext){
+      showPermissionScreen('Este site precisa ser aberto em HTTPS (ou localhost) para acessar a câmera. Abrir o arquivo direto do computador (file://) não funciona.');
+      return;
+    }
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+      showPermissionScreen('Este navegador não permite acesso à câmera aqui. Tente abrir no Chrome, Safari ou Firefox atualizados.');
+      return;
+    }
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: currentFacing }, audio: false })
+      .then(function(stream){
+        stopStream();
+        currentStream = stream;
+        video.srcObject = stream;
+        document.documentElement.style.setProperty('--mirror', currentFacing === 'user' ? '-1' : '1');
+        return video.play();
+      })
+      .then(function(){
+        permissionScreen.style.display = 'none';
+        if(!scene) initThree();
+      })
+      .catch(function(err){
+        var msg = 'Não foi possível acessar a câmera.';
+        if(err && err.name === 'NotAllowedError') msg = 'A permissão da câmera foi negada. Você pode liberar nas configurações do site.';
+        else if(err && err.name === 'NotFoundError') msg = 'Nenhuma câmera foi encontrada neste aparelho.';
+        else if(err && err.name === 'NotReadableError') msg = 'A câmera já está sendo usada por outro aplicativo.';
+        else if(err && err.name === 'OverconstrainedError') msg = 'A câmera do aparelho não atende aos requisitos pedidos.';
+        else if(err && err.name === 'SecurityError') msg = 'O navegador bloqueou o acesso à câmera nesta página.';
+        showPermissionScreen(msg);
+      });
+  }
+
+  function showPermissionScreen(msg){
+    permissionScreen.style.display = 'flex';
+    permissionScreen.querySelector('p').textContent = msg + ' Toque abaixo para tentar de novo.';
+  }
+
+  grantBtn.addEventListener('click', function(){
+    try{ if(document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(function(){}); }catch(e){}
+    initCamera();
+  });
+
+  flipBtn.addEventListener('click', function(){
+    currentFacing = currentFacing === 'environment' ? 'user' : 'environment';
+    initCamera();
+  });
+
+  // pede a câmera assim que a página carrega; o botão continua disponível
+  // como alternativa para navegadores que exigem um toque do usuário
+  initCamera();
+
+  // ---------- AR real (WebXR) ----------
+  // Rastreamento de verdade do ARCore/WebXR: o objeto fica com posição fixa
+  // no espaço (world space) assim que a sessão começa, então some quando você
+  // vira a câmera para outro lado e reaparece exatamente ali quando volta —
+  // sem gambiarra de giroscópio, é rastreamento espacial real do navegador.
+  if(navigator.xr && navigator.xr.isSessionSupported){
+    navigator.xr.isSessionSupported('immersive-ar').then(function(supported){
+      xrSupported = supported;
+      if(!supported) arBtn.title = 'AR real indisponível neste navegador/aparelho';
+    }).catch(function(){
+      xrSupported = false;
+      arBtn.title = 'AR real indisponível neste navegador/aparelho';
+    });
+  } else {
+    arBtn.title = 'Este navegador não suporta WebXR (funciona no Chrome para Android)';
+  }
+
+  arBtn.addEventListener('click', function(){
+    if(xrSession){ xrSession.end(); return; }
+    if(!currentObject){ showToast('Importe um objeto antes de ativar a AR real.'); return; }
+    if(!navigator.xr){
+      showToast('Este navegador não suporta WebXR. Use o Chrome no Android.');
+      return;
+    }
+    navigator.xr.requestSession('immersive-ar', {
+      requiredFeatures: ['local'],
+      optionalFeatures: ['dom-overlay'],
+      domOverlay: { root: document.body }
+    }).then(startXR).catch(function(err){
+      var msg = 'Não foi possível iniciar a sessão AR aqui.';
+      if(err && err.name === 'NotSupportedError') msg = 'Este navegador ou aparelho não suporta AR real (WebXR). No iPhone/Safari isso ainda não existe — use Chrome no Android.';
+      else if(err && err.name === 'SecurityError') msg = 'Este ambiente não permite rastreamento espacial (xr-spatial-tracking) para a sessão AR.';
+      showToast(msg);
+    });
+  });
+
+  function startXR(session){
+    xrSession = session;
+    session.addEventListener('end', onXREnd);
+    renderer.xr.setReferenceSpaceType('local');
+    renderer.xr.setSession(session);
+
+    stopStream();
+    document.documentElement.classList.add('xr-active');
+    document.body.classList.add('xr-active');
+    video.style.display = 'none';
+    flipBtn.disabled = true;
+    recordBtn.disabled = true;
+    arBtn.textContent = '⏹';
+    arBtn.classList.add('active');
+    arBtn.title = 'Sair da AR real';
+
+    showToast('AR real ativada — mova a câmera livremente');
+    renderer.setAnimationLoop(animate);
+  }
+
+  function onXREnd(){
+    xrSession = null;
+    renderer.setAnimationLoop(null);
+    document.documentElement.classList.remove('xr-active');
+    document.body.classList.remove('xr-active');
+    video.style.display = '';
+    flipBtn.disabled = false;
+    recordBtn.disabled = !currentObject;
+    arBtn.textContent = '🌐';
+    arBtn.classList.remove('active');
+    arBtn.title = 'Ativar AR real (WebXR)';
+    showToast('Sessão AR encerrada');
+    requestAnimationFrame(rafLoop);
+    initCamera();
+  }
+
+  // ---------- microfone ----------
+  micBtn.addEventListener('click', function(){
+    if(!micEnabled){
+      navigator.mediaDevices.getUserMedia({ audio: true })
+        .then(function(stream){
+          micStream = stream;
+          micEnabled = true;
+          micBtn.textContent = '🎤';
+          micBtn.classList.add('active');
+          showToast('Microfone ativado');
+        })
+        .catch(function(){
+          showToast('Não foi possível ativar o microfone.');
+        });
+    } else {
+      if(micStream){ micStream.getTracks().forEach(function(t){ t.stop(); }); micStream = null; }
+      micEnabled = false;
+      micBtn.textContent = '🔇';
+      micBtn.classList.remove('active');
+      showToast('Microfone desativado');
+    }
+  });
+
+  // ---------- importar modelo ----------
+  importBtn.addEventListener('click', function(){ fileInput.click(); });
+
+  fileInput.addEventListener('change', function(){
+    var file = fileInput.files && fileInput.files[0];
+    if(!file) return;
+    handleFile(file);
+    fileInput.value = '';
+  });
+
+  function handleFile(file){
+    var ext = file.name.split('.').pop().toLowerCase();
+    var reader = new FileReader();
+
+    if(ext === 'glb' || ext === 'gltf'){
+      reader.onload = function(e){
+        try{
+          var loader = new THREE.GLTFLoader();
+          loader.parse(e.target.result, '', function(gltf){
+            setModel(gltf.scene, gltf.animations || []);
+          }, function(){ showToast('Não consegui abrir este arquivo .' + ext); });
+        }catch(err){ showToast('Não consegui abrir este arquivo .' + ext); }
+      };
+      reader.readAsArrayBuffer(file);
+    } else if(ext === 'obj'){
+      reader.onload = function(e){
+        try{
+          var loader = new THREE.OBJLoader();
+          var obj = loader.parse(e.target.result);
+          setModel(obj, []);
+        }catch(err){ showToast('Não consegui abrir este arquivo .obj'); }
+      };
+      reader.readAsText(file);
+    } else {
+      showToast('Formato não suportado. Use .obj, .glb ou .gltf');
+    }
+  }
+
+  function setModel(object, animations){
+    if(currentObject){
+      scene.remove(currentObject);
+      currentObject.traverse(function(node){
+        if(node.geometry) node.geometry.dispose();
+        if(node.material){
+          if(Array.isArray(node.material)) node.material.forEach(function(m){ m.dispose(); });
+          else node.material.dispose();
+        }
+      });
+      currentObject = null;
+    }
+
+    var box = new THREE.Box3().setFromObject(object);
+    var size = box.getSize(new THREE.Vector3());
+    var center = box.getCenter(new THREE.Vector3());
+    object.position.x -= center.x;
+    object.position.y -= center.y;
+    object.position.z -= center.z;
+
+    var group = new THREE.Group();
+    group.add(object);
+
+    var maxDim = Math.max(size.x, size.y, size.z) || 1;
+    var normScale = 0.6 / maxDim;
+    group.scale.setScalar(normScale);
+    group.position.set(0, 0, -1.6);
+    group.rotation.set(0, 0, 0);
+
+    scene.add(group);
+    currentObject = group;
+    baseScale = normScale;
+    initialPose = {
+      position: group.position.clone(),
+      rotation: group.rotation.clone(),
+      scale: group.scale.clone()
+    };
+
+    if(animations && animations.length){
+      mixer = new THREE.AnimationMixer(object);
+      animations.forEach(function(clip){ mixer.clipAction(clip).play(); });
+    } else {
+      mixer = null;
+    }
+
+    emptyHint.style.display = 'none';
+    setControlsEnabled(true);
+    scaleSlider.value = '1';
+    updateReadout();
+    showToast('Objeto carregado');
+  }
+
+  function setControlsEnabled(on){
+    recordBtn.disabled = !on;
+    resetBtn.disabled = !on;
+    rotateLBtn.disabled = !on;
+    rotateRBtn.disabled = !on;
+    scaleSlider.disabled = !on;
+    arBtn.disabled = !on;
+  }
+
+  function updateReadout(){
+    if(!currentObject) return;
+    roX.textContent = currentObject.position.x.toFixed(2);
+    roY.textContent = currentObject.position.y.toFixed(2);
+    var deg = (currentObject.rotation.y * 180 / Math.PI) % 360;
+    if(deg < 0) deg += 360;
+    roR.textContent = Math.round(deg) + '°';
+  }
+
+  // ---------- rotação / escala / reset ----------
+  rotateLBtn.addEventListener('click', function(){
+    if(!currentObject) return;
+    currentObject.rotation.y -= Math.PI / 12;
+    updateReadout();
+  });
+  rotateRBtn.addEventListener('click', function(){
+    if(!currentObject) return;
+    currentObject.rotation.y += Math.PI / 12;
+    updateReadout();
+  });
+  resetBtn.addEventListener('click', function(){
+    if(!currentObject || !initialPose) return;
+    currentObject.position.copy(initialPose.position);
+    currentObject.rotation.copy(initialPose.rotation);
+    currentObject.scale.copy(initialPose.scale);
+    scaleSlider.value = '1';
+    updateReadout();
+  });
+  scaleSlider.addEventListener('input', function(){
+    if(!currentObject) return;
+    currentObject.scale.setScalar(baseScale * parseFloat(scaleSlider.value));
+  });
+  zoomInBtn.addEventListener('click', function(){
+    if(!currentObject) return;
+    scaleSlider.value = clamp(parseFloat(scaleSlider.value) + 0.15, 0.3, 4).toFixed(2);
+    scaleSlider.dispatchEvent(new Event('input'));
+  });
+  zoomOutBtn.addEventListener('click', function(){
+    if(!currentObject) return;
+    scaleSlider.value = clamp(parseFloat(scaleSlider.value) - 0.15, 0.3, 4).toFixed(2);
+    scaleSlider.dispatchEvent(new Event('input'));
+  });
+
+  // ---------- joystick (move o objeto) ----------
+  function joystickPointFromEvent(e){
+    var rect = joystickBase.getBoundingClientRect();
+    var cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+    return { dx: e.clientX - cx, dy: e.clientY - cy };
+  }
+  function updateJoystick(e){
+    var p = joystickPointFromEvent(e);
+    var r = Math.min(JOY_MAX, Math.hypot(p.dx, p.dy));
+    var ang = Math.atan2(p.dy, p.dx);
+    var kx = Math.cos(ang) * r, ky = Math.sin(ang) * r;
+    joystickKnob.style.transform = 'translate(' + kx + 'px,' + ky + 'px)';
+    joystickVec.x = kx / JOY_MAX;
+    joystickVec.y = ky / JOY_MAX;
+  }
+  function endJoystick(){
+    joystickActive = false;
+    joystickVec.x = 0; joystickVec.y = 0;
+    joystickKnob.style.transform = 'translate(0px,0px)';
+  }
+  joystickBase.addEventListener('pointerdown', function(e){
+    if(!currentObject) return;
+    joystickActive = true;
+    joystickBase.setPointerCapture(e.pointerId);
+    updateJoystick(e);
+  });
+  joystickBase.addEventListener('pointermove', function(e){ if(joystickActive) updateJoystick(e); });
+  joystickBase.addEventListener('pointerup', endJoystick);
+  joystickBase.addEventListener('pointercancel', endJoystick);
+
+  // ---------- gravação (câmera + objeto 3D), sempre 9:16 ----------
+  function pickMimeType(){
+    var candidates = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'];
+    for(var i = 0; i < candidates.length; i++){
+      if(window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(candidates[i])) return candidates[i];
+    }
+    return '';
+  }
+
+  function ensureCompositeCanvas(){
+    if(!compositeCanvas){
+      compositeCanvas = document.createElement('canvas');
+      compositeCanvas.width = TARGET_W;
+      compositeCanvas.height = TARGET_H;
+      compositeCtx = compositeCanvas.getContext('2d');
+    }
+  }
+
+  function drawCover(ctx, img, sw, sh, dw, dh){
+    if(!sw || !sh) return;
+    var srcRatio = sw / sh, dstRatio = dw / dh;
+    var cropW = sw, cropH = sh, cropX = 0, cropY = 0;
+    if(srcRatio > dstRatio){ cropW = sh * dstRatio; cropX = (sw - cropW) / 2; }
+    else { cropH = sw / dstRatio; cropY = (sh - cropH) / 2; }
+    ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, dw, dh);
+  }
+
+  function compositeFrame(){
+    ensureCompositeCanvas();
+    var w = TARGET_W, h = TARGET_H;
+    compositeCtx.save();
+    compositeCtx.clearRect(0, 0, w, h);
+    var vw = video.videoWidth || w, vh = video.videoHeight || h;
+    if(currentFacing === 'user'){
+      compositeCtx.translate(w, 0);
+      compositeCtx.scale(-1, 1);
+    }
+    drawCover(compositeCtx, video, vw, vh, w, h);
+    compositeCtx.restore();
+    drawCover(compositeCtx, renderer.domElement, renderer.domElement.width, renderer.domElement.height, w, h);
+  }
+
+  function updateRecTimer(){
+    var s = Math.floor((Date.now() - recordStart) / 1000);
+    var m = Math.floor(s / 60);
+    var ss = (s % 60).toString().padStart(2, '0');
+    recTimerText.textContent = m + ':' + ss;
+  }
+
+  function startRecording(){
+    if(!window.MediaRecorder){ showToast('Gravação não suportada neste navegador'); return; }
+    ensureCompositeCanvas();
+    var mime = pickMimeType();
+    recordingMimeType = mime;
+    var tracks = compositeCanvas.captureStream(30).getVideoTracks();
+    if(micEnabled && micStream){ tracks = tracks.concat(micStream.getAudioTracks()); }
+    var stream = new MediaStream(tracks);
+    try{
+      mediaRecorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+    }catch(err){
+      showToast('Não foi possível iniciar a gravação');
+      return;
+    }
+    recordedChunks = [];
+    mediaRecorder.ondataavailable = function(e){ if(e.data && e.data.size > 0) recordedChunks.push(e.data); };
+    mediaRecorder.onstop = function(){
+      var blob = new Blob(recordedChunks, { type: recordingMimeType || 'video/webm' });
+      if(lastVideoBlobUrl) URL.revokeObjectURL(lastVideoBlobUrl);
+      lastVideoBlobUrl = URL.createObjectURL(blob);
+      previewVideo.src = lastVideoBlobUrl;
+      previewSheet.classList.add('show');
+    };
+    mediaRecorder.start();
+    isRecording = true;
+    recordStart = Date.now();
+    recordBtn.classList.add('recording');
+    recTimerEl.classList.add('show');
+    updateRecTimer();
+    recTimerInterval = setInterval(updateRecTimer, 500);
+  }
+
+  function stopRecording(){
+    if(mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+    isRecording = false;
+    recordBtn.classList.remove('recording');
+    recTimerEl.classList.remove('show');
+    clearInterval(recTimerInterval);
+  }
+
+  recordBtn.addEventListener('click', function(){
+    if(!currentObject) return;
+    if(!isRecording) startRecording(); else stopRecording();
+  });
+
+  saveBtn.addEventListener('click', function(){
+    if(!lastVideoBlobUrl) return;
+    var a = document.createElement('a');
+    a.href = lastVideoBlobUrl;
+    a.download = 'visor-ar-' + Date.now() + (recordingMimeType.indexOf('mp4') > -1 ? '.mp4' : '.webm');
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    showToast('Vídeo salvo.');
+    previewSheet.classList.remove('show');
+  });
+
+  discardBtn.addEventListener('click', function(){
+    previewSheet.classList.remove('show');
+    if(lastVideoBlobUrl){ URL.revokeObjectURL(lastVideoBlobUrl); lastVideoBlobUrl = null; }
+    previewVideo.removeAttribute('src');
+    previewVideo.load();
+  });
+
+})();
+</script>
+</body>
+</html>
